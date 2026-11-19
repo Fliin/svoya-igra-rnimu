@@ -7,14 +7,17 @@
   <meta name="description" content="Своя игра для вечера «Корпорации Пирожкова»: вопросы, раунды и счёт на одном экране.">
   <title>Своя игра · Корпорация Пирожкова</title>
   <link rel="icon" href="./assets/favicon.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="./styles.css">
+  <link rel="stylesheet" href="./styles.css?v=20261120-transfer">
 </head>
 <body>
   <div id="app"></div>
   <div id="toast" role="status" aria-live="polite"></div>
   <dialog id="editor"></dialog>
   <dialog id="confirm-box" aria-labelledby="confirm-title"></dialog>
+  <input id="excel-input" type="file" accept=".xlsx" hidden>
+  <input id="json-input" type="file" accept=".json,application/json" hidden>
+  <script src="./vendor/xlsx.mini.min.js" defer></script>
   <noscript>Для работы игры включите JavaScript в браузере.</noscript>
-  <script type="module" src="./app.js"></script>
+  <script type="module" src="./app.js?v=20261120-transfer"></script>
 </body>
 </html>

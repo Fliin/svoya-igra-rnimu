@@ -4,10 +4,11 @@ export const DEFAULT_GAME_TITLE = 'Корпорация Пирожкова';
 export const blankQuestion = () => ({ id: uid(), text: '', image: '', answer: '', answerImage: '' });
 export const blankCell = () => ({ id: uid(), questionId: '', question: null, cat: false, modifier: false, played: false });
 export const blankRound = (name = 'Новый раунд') => ({ id: uid(), name, prices: [100, 200, 300, 400, 500], topics: [] });
+export const blankFinal = () => ({ enabled: false, topics: [], run: null });
 export function newGame() {
   const round = blankRound('Раунд 1');
   return { title: DEFAULT_GAME_TITLE, teams: [1, 2, 3].map(n => ({ id: uid(), name: `Команда ${n}`, score: 0 })), rounds: [round], catPool: [], modPool: [], specialBank: null,
-    started: false, finished: false, roundId: round.id, active: null, usedCats: [], log: [] };
+    started: false, finished: false, roundId: round.id, active: null, usedCats: [], log: [], final: blankFinal() };
 }
 export function topicFromTheme(theme, assign = false) {
   return { id: uid(), themeId: theme.id, name: theme.name, cells: Array.from({ length: 5 }, (_, i) => {
@@ -68,6 +69,21 @@ export function readiness(state) {
   for (const q of specials.cats) for (const issue of questionIssues(q)) errors.push(`Кот «${q.text.slice(0, 35) || 'без названия'}»: ${issue}.`);
   if (mods && !specials.modifiers.length) errors.push('Выберите хотя бы один модификатор в пул игры.');
   if (specials.modifiers.some(m => !validModifier(m))) errors.push('В пуле есть некорректный модификатор.');
+  return errors.concat(finalReadiness(state));
+}
+export function finalReadiness(state) {
+  const f=state.game.final;
+  if(!f?.enabled)return [];
+  const errors=[],used=new Set(state.game.rounds.flatMap(r=>r.topics.flatMap(t=>t.cells.filter(c=>!c.cat).map(c=>c.questionId))).filter(Boolean));
+  if(f.topics.length!==5)errors.push('Финал: настройте ровно 5 тем.');
+  const themes=new Set();
+  for(const [i,t] of f.topics.entries()){
+    if(!t.themeId||!t.name.trim())errors.push(`Финал / тема ${i+1}: выберите тему из банка.`);
+    else if(themes.has(t.themeId))errors.push(`Финал: тема «${t.name}» выбрана повторно.`);
+    themes.add(t.themeId);
+    for(const issue of questionIssues(t.question))errors.push(`Финал / ${t.name||'тема '+(i+1)}: ${issue}.`);
+    if(t.questionId){if(used.has(t.questionId))errors.push(`Финал / ${t.name}: вопрос уже назначен обычному раунду или другой теме финала.`);used.add(t.questionId);}
+  }
   return errors;
 }
 export function startGame(state, rehearsal = false) {
@@ -92,6 +108,7 @@ export function editableCell(g, id) {
 }
 export function assignQuestion(g, cellId, question) {
   const { cell } = editableCell(g, cellId);
+  if(question&&g.final?.enabled&&g.final.topics.some(t=>t.questionId===question.id))throw new Error('Этот вопрос уже назначен финалу.');
   if (question) for (const r of g.rounds) for (const t of r.topics) for (const c of t.cells) {
     if (c.id !== cellId && !c.cat && c.questionId === question.id) throw new Error('Этот вопрос уже назначен другой клетке.');
   }
@@ -101,7 +118,7 @@ export function assignQuestion(g, cellId, question) {
 const draw = (items, random) => items.length ? clone(items[Math.min(items.length - 1, Math.floor(random() * items.length))]) : null;
 export function openCell(state, id, rehearsal = false, random = Math.random) {
   const g = state.game;
-  if (!g.started || g.finished || g.active) throw new Error('Сейчас нельзя открыть новую клетку.');
+  if (!g.started || g.finished || g.active || g.final?.run) throw new Error('Сейчас нельзя открыть новую клетку.');
   const { round, topic, cell, index } = findCell(g, id);
   if (cell.played) throw new Error('Этот вопрос уже сыгран.');
   const specials = selectedSpecials(state);
@@ -134,15 +151,26 @@ export function selectAnswering(g, teamId) {
   if (a.cat && !a.attempts.length && a.teamId !== teamId) throw new Error('Первой отвечает назначенная команда.');
   a.answeringTeamId = teamId;
 }
-export function recordMiss(g) {
-  const a = g.active;
-  if (!a || a.stage !== 'question' || !a.answeringTeamId) throw new Error('Сначала выберите отвечающую команду.');
-  if (!a.attempts.includes(a.answeringTeamId)) a.attempts.push(a.answeringTeamId);
-  a.answeringTeamId = '';
-}
 export function revealAnswer(g) {
   if (!g.active || g.active.stage !== 'question') throw new Error('Сначала откройте вопрос.');
   g.active.stage = 'answer';
+  g.active.resolution = { correct: null };
+}
+export function judgeAnswer(g, teamId, correct) {
+  const a = g.active, team = g.teams.find(t => t.id === teamId);
+  if (!a || a.stage !== 'question' || !team || a.answeringTeamId !== teamId || a.attempts.includes(teamId) || typeof correct !== 'boolean') throw new Error('Сначала выберите доступную отвечающую команду.');
+  const delta = scoreDelta(a.price, a.modifier, correct ? 1 : -1);
+  if (!Number.isSafeInteger(team.score + delta)) throw new Error('Счёт вышел за допустимый диапазон.');
+  team.score += delta;
+  g.log.push({ id: uid(), time: Date.now(), team: team.name, delta, reason: `${a.topic} · ${correct ? 'Верно' : 'Неверно'}`, cellId: a.cellId });
+  if (correct) {
+    a.resolution = { correct: true, teamId, delta };
+    a.stage = 'answer';
+  } else {
+    a.attempts.push(teamId);
+    a.answeringTeamId = '';
+  }
+  return delta;
 }
 export function scoreDelta(price, modifier, sign) {
   let value = sign * price;
@@ -150,21 +178,19 @@ export function scoreDelta(price, modifier, sign) {
   if (modifier?.type === 'fixed' && (modifier.on === 'always' || modifier.on === (sign > 0 ? 'win' : 'loss'))) value += modifier.value;
   return Math.round(value);
 }
-export function changeScore(g, teamId, sign) {
-  const a = g.active, team = g.teams.find(t => t.id === teamId);
-  if (!a || a.stage !== 'answer' || !team || ![1, -1].includes(sign)) throw new Error('Баллы доступны после показа ответа.');
-  const delta = scoreDelta(a.price, a.modifier, sign);
-  if (!Number.isSafeInteger(team.score + delta)) throw new Error('Счёт вышел за допустимый диапазон.');
-  team.score += delta;
-  g.log.push({ id: uid(), time: Date.now(), team: team.name, delta, reason: a.topic, cellId: a.cellId });
-  return delta;
-}
 export function setScore(g, teamId, value) {
   if (!Number.isSafeInteger(value)) throw new Error('Счёт должен быть целым числом.');
   const t = g.teams.find(t => t.id === teamId);
   if (!t) throw new Error('Команда не найдена.');
+  if (!Number.isSafeInteger(value - t.score)) throw new Error('Слишком большое изменение счёта.');
   g.log.push({ id: uid(), time: Date.now(), team: t.name, delta: value - t.score, reason: 'Ручная корректировка' });
   t.score = value;
+  const final=g.final?.run;
+  if(final&&['veto','bets'].includes(final.stage)){
+    final.caps[teamId]=Math.max(0,value);
+    if(value<=0)final.bets[teamId]=0;
+    else if(final.bets[teamId]>value)final.bets[teamId]=null;
+  }
 }
 export function closeQuestion(g) {
   if (!g.active) return;
@@ -180,9 +206,10 @@ export function resetGame(state) {
   for (const t of g.teams) t.score = 0;
   for (const r of g.rounds) for (const t of r.topics) for (const c of t.cells) c.played = false;
   g.roundId = g.rounds[0]?.id || '';
+  if(g.final)g.final.run=null;
 }
 export const STORAGE_KEY = 'rnimu-svoya-igra-v1';
-function validSavedState(s) {
+export function validSavedState(s) {
   const array = Array.isArray;
   const text = x => typeof x === 'string';
   const question = q => q && ['id','text','image','answer','answerImage'].every(k=>text(q[k]));
@@ -196,6 +223,7 @@ function validSavedState(s) {
       array(r.topics)&&r.topics.every(t=>text(t.id)&&text(t.name)&&array(t.cells)&&t.cells.length===5&&
         t.cells.every(c=>text(c.id)&&text(c.questionId)&&(c.question===null||question(c.question))))) &&
     array(g.catPool) && array(g.modPool) && array(g.usedCats) && array(g.log) &&
+    (g.final===undefined||(g.final&&typeof g.final.enabled==='boolean'&&array(g.final.topics)&&g.final.topics.length<=5&&g.final.topics.every(t=>text(t.id)&&text(t.themeId)&&text(t.name)&&text(t.questionId)&&(t.question===null||question(t.question)))&&(!g.final.run||['veto','bets','question','review','complete'].includes(g.final.run.stage)))) &&
     (!g.active || (text(g.active.cellId) && ['special','question','answer'].includes(g.active.stage) &&
       question(g.active.question) && array(g.active.attempts)));
 }
@@ -208,6 +236,7 @@ export function loadState(storage, fallback) {
     if (!raw) return { state: fallback(), warning: '' };
     const s = JSON.parse(raw);
     if (!validSavedState(s)) throw new Error();
+    if(s.game.final===undefined)s.game.final=blankFinal();
     if (s.game.title === 'Своя игра · РНИМУ') s.game.title = DEFAULT_GAME_TITLE;
     return { state: s, warning: '' };
   } catch { return { state: fallback(), warning: 'Не удалось прочитать сохранение. Исходные данные не перезаписаны. Откройте приложение в прежнем браузере или проверьте доступ к хранилищу.' }; }

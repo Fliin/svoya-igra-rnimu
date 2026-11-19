@@ -17,26 +17,27 @@ test('Повторы вопросов запрещены между раунда
   assert.match(C.readiness(s).join(' '),/повторяется/);
   assert.throws(()=>C.assignQuestion(s.game,r.topics[0].cells[0].id,s.bank.themes[0].questions[0]),/уже назначен/);
 });
-test('Баллы доступны только после ответа, повторные операции и отрицательный счёт',()=>{
+test('Верный ответ начисляется один раз, сразу открывается ответ',()=>{
   const s=seedState(), id=regular(s).id, t=s.game.teams[0];C.startGame(s);C.openCell(s,id);
-  assert.throws(()=>C.changeScore(s.game,t.id,1));C.revealAnswer(s.game);
-  C.changeScore(s.game,t.id,-1);C.changeScore(s.game,t.id,-1);assert.equal(t.score,-200);
-  C.changeScore(s.game,t.id,1);assert.equal(t.score,-100);assert.equal(s.game.log.length,3);
+  assert.throws(()=>C.judgeAnswer(s.game,t.id,true));C.selectAnswering(s.game,t.id);
+  assert.equal(C.judgeAnswer(s.game,t.id,true),100);assert.equal(t.score,100);assert.equal(s.game.active.stage,'answer');
+  assert.throws(()=>C.judgeAnswer(s.game,t.id,true));assert.equal(t.score,100);assert.equal(s.game.log.length,1);
   C.closeQuestion(s.game);assert.equal(C.findCell(s.game,id).cell.played,true);assert.throws(()=>C.openCell(s,id));
 });
-test('Перехваты следуют за ошибкой без автоматического списания',()=>{
-  const s=seedState();C.startGame(s);C.openCell(s,regular(s).id);
-  C.selectAnswering(s.game,s.game.teams[0].id);C.recordMiss(s.game);
-  assert.equal(s.game.teams[0].score,0);assert.throws(()=>C.selectAnswering(s.game,s.game.teams[0].id));
-  C.selectAnswering(s.game,s.game.teams[1].id);assert.equal(s.game.active.answeringTeamId,s.game.teams[1].id);
+test('Неверный ответ сразу списывает баллы, блокирует команду и разрешает перехват',()=>{
+  const s=seedState();C.startGame(s);C.openCell(s,regular(s).id);const [first,second]=s.game.teams;
+  C.selectAnswering(s.game,first.id);C.judgeAnswer(s.game,first.id,false);
+  assert.equal(first.score,-100);assert.equal(s.game.active.stage,'question');assert.equal(s.game.active.answeringTeamId,'');
+  assert.throws(()=>C.selectAnswering(s.game,first.id));assert.throws(()=>C.judgeAnswer(s.game,first.id,false));
+  C.selectAnswering(s.game,second.id);C.judgeAnswer(s.game,second.id,true);assert.equal(second.score,100);assert.equal(first.score,-100);
 });
-test('Кот и модификатор совмещаются, цена и команда задаются до вопроса',()=>{
+test('Кот и модификатор учитываются при оценке; первой отвечает назначенная команда',()=>{
   const s=seedState();s.game.modPool=[s.bank.modifiers[0].id];C.startGame(s);C.openCell(s,combined(s).id,false,()=>0);
-  const a=s.game.active,t=s.game.teams[0];assert.equal(a.stage,'special');assert.ok(a.modifier);assert.equal(s.game.usedCats.length,1);
-  assert.throws(()=>C.confirmSpecial(s.game,0,t.id));assert.throws(()=>C.confirmSpecial(s.game,750,''));
-  C.confirmSpecial(s.game,750,t.id);assert.equal(a.stage,'question');assert.equal(a.answeringTeamId,t.id);
-  assert.throws(()=>C.selectAnswering(s.game,s.game.teams[1].id));C.recordMiss(s.game);C.selectAnswering(s.game,s.game.teams[1].id);
-  C.revealAnswer(s.game);C.changeScore(s.game,t.id,-1);C.changeScore(s.game,t.id,1);C.changeScore(s.game,t.id,1);assert.equal(t.score,1500);
+  const a=s.game.active,[first,second]=s.game.teams;assert.equal(a.stage,'special');assert.ok(a.modifier);assert.equal(s.game.usedCats.length,1);
+  assert.throws(()=>C.confirmSpecial(s.game,0,first.id));assert.throws(()=>C.confirmSpecial(s.game,750,''));
+  C.confirmSpecial(s.game,750,first.id);assert.equal(a.stage,'question');assert.equal(a.answeringTeamId,first.id);
+  assert.throws(()=>C.selectAnswering(s.game,second.id));C.judgeAnswer(s.game,first.id,false);assert.equal(first.score,-1500);
+  C.selectAnswering(s.game,second.id);C.judgeAnswer(s.game,second.id,true);assert.equal(second.score,1500);
 });
 test('Коты не повторяются, модификаторы повторяются',()=>{
   const s=seedState();const cells=allCells(s);s.game.modPool=[s.bank.modifiers[0].id];
@@ -74,7 +75,7 @@ test('Редактировать можно только неоткрытые к
 });
 test('Репетиция полностью изолирована от настоящего прогресса и банка',()=>{
   const real=seedState();C.startGame(real);C.openCell(real,combined(real).id);const before=JSON.stringify(real), copy=C.clone(real);
-  C.resetGame(copy);C.startGame(copy,true);C.openCell(copy,regular(copy).id,true);C.revealAnswer(copy.game);C.changeScore(copy.game,copy.game.teams[0].id,1);C.closeQuestion(copy.game);copy.bank.themes[0].name='Проба';
+  C.resetGame(copy);C.startGame(copy,true);C.openCell(copy,regular(copy).id,true);C.selectAnswering(copy.game,copy.game.teams[0].id);C.judgeAnswer(copy.game,copy.game.teams[0].id,true);C.closeQuestion(copy.game);copy.bank.themes[0].name='Проба';
   assert.equal(JSON.stringify(real),before);
 });
 test('Сохранение восстанавливает активный спецвопрос без повторного розыгрыша',()=>{
@@ -105,7 +106,7 @@ test('Структурно повреждённое сохранение не л
 });
 test('Новое название сохраняет прежний прогресс и пользовательские названия',()=>{
   const s=seedState();s.game.title='Своя игра · РНИМУ';C.startGame(s);C.openCell(s,regular(s).id);
-  C.revealAnswer(s.game);C.changeScore(s.game,s.game.teams[0].id,1);C.closeQuestion(s.game);
+  C.selectAnswering(s.game,s.game.teams[0].id);C.judgeAnswer(s.game,s.game.teams[0].id,true);C.closeQuestion(s.game);
   const expected=C.clone(s);expected.game.title=C.DEFAULT_GAME_TITLE;
   assert.deepEqual(C.loadState({getItem:()=>JSON.stringify(s)},seedState).state,expected);
   s.game.title='Наш особенный вечер';
