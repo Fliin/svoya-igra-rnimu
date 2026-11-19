@@ -1,5 +1,7 @@
 # Своя игра · РНИМУ
 
+**[Открыть приложение](https://fliin.github.io/svoya-igra-rnimu/)** · [Репозиторий](https://github.com/Fliin/svoya-igra-rnimu)
+
 Статическое приложение для командного вечера: HTML, CSS и JavaScript, без сервера приложения, учётных записей и сборки. Подготовлено для GitHub Pages.
 
 ## Запуск на компьютере
