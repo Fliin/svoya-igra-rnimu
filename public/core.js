@@ -1,11 +1,12 @@
 export const clone = value => JSON.parse(JSON.stringify(value));
 export const uid = () => globalThis.crypto.randomUUID();
+export const DEFAULT_GAME_TITLE = 'Корпорация Пирожкова';
 export const blankQuestion = () => ({ id: uid(), text: '', image: '', answer: '', answerImage: '' });
 export const blankCell = () => ({ id: uid(), questionId: '', question: null, cat: false, modifier: false, played: false });
 export const blankRound = (name = 'Новый раунд') => ({ id: uid(), name, prices: [100, 200, 300, 400, 500], topics: [] });
 export function newGame() {
   const round = blankRound('Раунд 1');
-  return { title: 'Своя игра · РНИМУ', teams: [1, 2, 3].map(n => ({ id: uid(), name: `Команда ${n}`, score: 0 })), rounds: [round], catPool: [], modPool: [], specialBank: null,
+  return { title: DEFAULT_GAME_TITLE, teams: [1, 2, 3].map(n => ({ id: uid(), name: `Команда ${n}`, score: 0 })), rounds: [round], catPool: [], modPool: [], specialBank: null,
     started: false, finished: false, roundId: round.id, active: null, usedCats: [], log: [] };
 }
 export function topicFromTheme(theme, assign = false) {
@@ -207,6 +208,7 @@ export function loadState(storage, fallback) {
     if (!raw) return { state: fallback(), warning: '' };
     const s = JSON.parse(raw);
     if (!validSavedState(s)) throw new Error();
+    if (s.game.title === 'Своя игра · РНИМУ') s.game.title = DEFAULT_GAME_TITLE;
     return { state: s, warning: '' };
   } catch { return { state: fallback(), warning: 'Не удалось прочитать сохранение. Исходные данные не перезаписаны. Откройте приложение в прежнем браузере или проверьте доступ к хранилищу.' }; }
 }

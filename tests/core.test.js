@@ -103,3 +103,11 @@ test('Структурно повреждённое сохранение не л
   const s=seedState();s.game.rounds[0].topics[0].cells=null;
   assert.ok(C.loadState({getItem:()=>JSON.stringify(s)},seedState).warning);
 });
+test('Новое название сохраняет прежний прогресс и пользовательские названия',()=>{
+  const s=seedState();s.game.title='Своя игра · РНИМУ';C.startGame(s);C.openCell(s,regular(s).id);
+  C.revealAnswer(s.game);C.changeScore(s.game,s.game.teams[0].id,1);C.closeQuestion(s.game);
+  const expected=C.clone(s);expected.game.title=C.DEFAULT_GAME_TITLE;
+  assert.deepEqual(C.loadState({getItem:()=>JSON.stringify(s)},seedState).state,expected);
+  s.game.title='Наш особенный вечер';
+  assert.deepEqual(C.loadState({getItem:()=>JSON.stringify(s)},seedState).state,s);
+});
