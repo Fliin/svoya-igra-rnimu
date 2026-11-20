@@ -115,6 +115,7 @@ test('Настоящий Excel-шаблон читается локальной 
   const context={};vm.runInNewContext(fs.readFileSync(new URL('../public/vendor/xlsx.mini.min.js',import.meta.url),'utf8'),context);
   const bytes=fs.readFileSync(new URL('../public/templates/questions-template.xlsx',import.meta.url));
   const rows=readExcelRows(bytes,context.XLSX),plan=planQuestionImport(rows,{themes:[]});
+  assert.deepEqual(Array.from(rows[0].slice(5)), ['Ссылка на видео вопроса', 'Ссылка на видео ответа']);
   assert.equal(context.XLSX.version,'0.20.3');assert.deepEqual(plan.errors,[]);assert.equal(plan.count,2);assert.equal(plan.newThemes,2);
 });
 test('Не-Excel и архив с чрезмерным распакованным содержимым отклоняются',()=>{

@@ -1,4 +1,4 @@
-import { uid, newGame, topicFromTheme } from './core.js?v=20261120-transfer';
+import { uid, newGame, topicFromTheme } from './core.js?v=20261120-media';
 export function seedState() {
   const rows = [
     ['Наука рядом', [

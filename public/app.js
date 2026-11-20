@@ -1,10 +1,11 @@
-import * as C from './core.js?v=20261120-transfer';
-import { seedState } from './seed.js?v=20261120-transfer';
+import * as C from './core.js?v=20261120-media';
+import { seedState } from './seed.js?v=20261120-media';
 import { UndoHistory } from './undo.js';
-import { createBackup, readBackup, backupSummary, planQuestionImport, applyQuestionImport, MAX_FILE_SIZE } from './transfer.js';
+import { createBackup, readBackup, backupSummary, planQuestionImport, applyQuestionImport, MAX_FILE_SIZE } from './transfer.js?v=20261120-media';
 import { readExcelRows, MAX_EXCEL_SIZE } from './excel.js';
-import * as F from './final.js';
-import { finalSettings, finalBody, podiumBody } from './final-view.js';
+import * as F from './final.js?v=20261120-media';
+import { finalSettings, finalBody, podiumBody } from './final-view.js?v=20261120-media';
+import { mediaIssues, mediaSource, questionMedia } from './media.js?v=20261120-media';
 
 const app = document.querySelector('#app'), editor = document.querySelector('#editor');
 let loaded;
@@ -36,8 +37,37 @@ const icon = name => ({ book: '<path d="M4 4h6a4 4 0 0 1 4 3v14a4 4 0 0 0-4-2H4z
 const svg = name => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">${icon(name)}</svg>`;
 const field = (label, name, value = '', attrs = '') => `<label>${label}<input name="${name}" value="${esc(value)}" ${attrs}></label>`;
 const textarea = (label, name, value = '') => `<label>${label}<textarea name="${name}" rows="3">${esc(value)}</textarea></label>`;
-const qFields = q => `${textarea('Текст вопроса', 'text', q.text)}${field('Картинка вопроса · URL', 'image', q.image, 'type="url" placeholder="https://…"')}${textarea('Правильный ответ', 'answer', q.answer)}${field('Картинка ответа · URL', 'answerImage', q.answerImage, 'type="url" placeholder="https://…"')}`;
-const qFromForm = (f, id) => ({ id, text: f.get('text').trim(), image: f.get('image').trim(), answer: f.get('answer').trim(), answerImage: f.get('answerImage').trim() });
+function mediaField(q, answer = false) {
+  const name = answer ? 'answer' : 'question';
+  const label = answer ? 'ответа' : 'вопроса';
+  const { kind, url } = questionMedia(q, answer);
+  return `<div class="editor-media">
+    <div class="editor-media-fields">
+      <label>Медиа ${label}<select name="${name}MediaKind" data-media-input>
+        <option value="image">Картинка</option>
+        <option value="video" ${kind === 'video' ? 'selected' : ''}>Видео</option>
+      </select></label>
+      ${field(`Ссылка для ${label}`, name+'MediaUrl', url, 'type="url" data-media-input placeholder="https://…"')}
+      ${btn('Предпросмотр', 'preview-media', `aria-label="Предпросмотр медиа ${label}"`, 'small')}
+    </div>
+    <div class="editor-media-preview"></div>
+  </div>`;
+}
+const qFields = q => `${textarea('Текст вопроса', 'text', q.text)}${mediaField(q)}
+  ${textarea('Правильный ответ', 'answer', q.answer)}${mediaField(q, true)}`;
+function qFromForm(form, id) {
+  const question = { id, text: form.get('text').trim(), answer: form.get('answer').trim(), image: '', answerImage: '' };
+  const questionUrl = form.get('questionMediaUrl').trim();
+  const answerUrl = form.get('answerMediaUrl').trim();
+  if (form.get('questionMediaKind') === 'video') question.video = questionUrl;
+  else question.image = questionUrl;
+  if (form.get('answerMediaKind') === 'video') question.answerVideo = answerUrl;
+  else question.answerImage = answerUrl;
+  const issues = mediaIssues(question);
+  if (issues.length) throw new Error(issues.join('. '));
+  return question;
+}
+const questionLabel = q => q?.video ? 'Вопрос с видео' : q?.image ? 'Вопрос с картинкой' : 'Вопрос без текста';
 function toast(message) {
   const el = document.querySelector('#toast'); el.textContent = message; el.classList.add('visible');
   clearTimeout(toast.timer); toast.timer = setTimeout(() => el.classList.remove('visible'), 4500);
@@ -82,9 +112,9 @@ function bank() {
   if (bankTab === 'themes') {
     const theme = b.themes.find(t=>t.id===themeId) || b.themes[0]; themeId = theme?.id;
     const qs = (theme?.questions || []).filter(q=>`${q.text} ${q.answer}`.toLowerCase().includes(search.toLowerCase()));
-    body = `<div class="bank-layout"><aside class="panel theme-list"><div class="section-top"><h2>Темы</h2>${btn('+', 'add-theme', 'aria-label="Добавить тему"', 'small')}</div>${b.themes.map(t=>`<button class="theme-item ${t.id===themeId?'selected':''}" data-act="choose-theme" data-id="${t.id}"><span>${esc(t.name)}</span><span>${t.questions.length}</span></button>`).join('') || '<p class="muted">Создайте первую тему.</p>'}</aside><section class="panel"><div class="section-top"><div><h2>${esc(theme?.name || 'Вопросы')}</h2><p class="muted">Банк и подготовленная игра хранят отдельные копии вопросов.</p></div><div class="actions">${theme ? btn('Изменить тему','rename-theme',`data-id="${theme.id}"`,'quiet small')+btn('Удалить тему','delete-theme',`data-id="${theme.id}"`,'danger quiet small')+btn('+ Вопрос','edit-question',`data-theme="${theme.id}"`,'primary') : ''}</div></div><label class="search-label">Поиск<input id="question-search" placeholder="Найти вопрос или ответ" value="${esc(search)}"></label><div class="question-list">${qs.map((q,i)=>`<article class="question-row"><span class="question-number">${i+1}</span><div><h3>${esc(q.text || 'Вопрос с изображением')}</h3><p class="muted">${esc(q.answer || 'Ответ с изображением')}${q.image || q.answerImage ? ' · Есть изображение' : ''}</p></div><div class="actions">${btn('Изменить','edit-question',`data-id="${q.id}" data-theme="${theme.id}"`,'small')}${btn('Удалить','delete-question',`data-id="${q.id}" data-theme="${theme.id}"`,'quiet danger small')}</div></article>`).join('') || '<div class="empty">Вопросов пока нет. Добавьте текст, картинку или оба варианта.</div>'}</div></section></div>`;
+    body = `<div class="bank-layout"><aside class="panel theme-list"><div class="section-top"><h2>Темы</h2>${btn('+', 'add-theme', 'aria-label="Добавить тему"', 'small')}</div>${b.themes.map(t=>`<button class="theme-item ${t.id===themeId?'selected':''}" data-act="choose-theme" data-id="${t.id}"><span>${esc(t.name)}</span><span>${t.questions.length}</span></button>`).join('') || '<p class="muted">Создайте первую тему.</p>'}</aside><section class="panel"><div class="section-top"><div><h2>${esc(theme?.name || 'Вопросы')}</h2><p class="muted">Банк и подготовленная игра хранят отдельные копии вопросов.</p></div><div class="actions">${theme ? btn('Изменить тему','rename-theme',`data-id="${theme.id}"`,'quiet small')+btn('Удалить тему','delete-theme',`data-id="${theme.id}"`,'danger quiet small')+btn('+ Вопрос','edit-question',`data-theme="${theme.id}"`,'primary') : ''}</div></div><label class="search-label">Поиск<input id="question-search" placeholder="Найти вопрос или ответ" value="${esc(search)}"></label><div class="question-list">${qs.map((q,i)=>`<article class="question-row"><span class="question-number">${i+1}</span><div><h3>${esc(q.text || questionLabel(q))}</h3><p class="muted">${esc(q.answer || (q.answerVideo ? 'Ответ с видео' : 'Ответ с картинкой'))}${q.video || q.answerVideo ? ' · Есть видео' : q.image || q.answerImage ? ' · Есть изображение' : ''}</p></div><div class="actions">${btn('Изменить','edit-question',`data-id="${q.id}" data-theme="${theme.id}"`,'small')}${btn('Удалить','delete-question',`data-id="${q.id}" data-theme="${theme.id}"`,'quiet danger small')}</div></article>`).join('') || '<div class="empty">Вопросов пока нет. Добавьте текст, картинку или оба варианта.</div>'}</div></section></div>`;
   } else if (bankTab === 'cats') {
-    body = `<div class="section-top"><p class="muted">«Кот» заменяет обычный вопрос. В игре каждый выпадает только один раз.</p>${btn('+ Кот в мешке','edit-cat','','primary')}</div><div class="content-grid">${b.cats.map(q=>`<article class="panel special-card"><span class="badge">Кот в мешке</span><h3>${esc(q.text || 'Вопрос с изображением')}</h3><p class="muted">${esc(q.answer || 'Ответ с изображением')}</p><div class="actions">${btn('Изменить','edit-cat',`data-id="${q.id}"`)}${btn('Удалить','delete-cat',`data-id="${q.id}"`,'quiet danger')}</div></article>`).join('') || '<div class="empty">Добавьте специальные вопросы в банк.</div>'}</div>`;
+    body = `<div class="section-top"><p class="muted">«Кот» заменяет обычный вопрос. В игре каждый выпадает только один раз.</p>${btn('+ Кот в мешке','edit-cat','','primary')}</div><div class="content-grid">${b.cats.map(q=>`<article class="panel special-card"><span class="badge">Кот в мешке</span><h3>${esc(q.text || questionLabel(q))}</h3><p class="muted">${esc(q.answer || (q.answerVideo ? 'Ответ с видео' : 'Ответ с картинкой'))}</p><div class="actions">${btn('Изменить','edit-cat',`data-id="${q.id}"`)}${btn('Удалить','delete-cat',`data-id="${q.id}"`,'quiet danger')}</div></article>`).join('') || '<div class="empty">Добавьте специальные вопросы в банк.</div>'}</div>`;
   } else {
     body = `<div class="section-top"><p class="muted">Множитель меняет выигрыш и списание. Фиксированный эффект прибавляет заданное число при выбранном условии.</p>${btn('+ Модификатор','edit-mod','','primary')}</div><div class="content-grid">${b.modifiers.map(m=>`<article class="panel special-card"><span class="effect-value">${m.type==='multiply'?'×'+num(m.value):signed(m.value)}</span><h3>${esc(m.name)}</h3><p class="muted">${esc(m.description)}</p><p>${m.type==='multiply'?'Каждое начисление и списание':m.on==='win'?'При начислении':m.on==='loss'?'При списании':'При каждой операции'}</p><div class="actions">${btn('Изменить','edit-mod',`data-id="${m.id}"`)}${btn('Удалить','delete-mod',`data-id="${m.id}"`,'quiet danger')}</div></article>`).join('') || '<div class="empty">Создайте первый эффект.</div>'}</div>`;
   }
@@ -93,16 +123,64 @@ function bank() {
 function setup() {
   const g = G(), b = S().bank, errors = C.readiness(S());
   const r = g.rounds.find(r=>r.id===roundId) || g.rounds[0]; roundId = r?.id;
-  return `${header('Настройка игры','Подготовьте поле — и собирайте команды.')}<main class="page-shell setup-shell"><div class="setup-main"><section class="panel"><div class="section-top"><h2>Игра и команды</h2><span class="badge">${g.started?'Игра начата':'Подготовка'}</span></div><div class="form-grid">${field('Название вечера','game-title',g.title,'data-setting="title" maxlength="100"')}<label>Количество команд<select data-setting="team-count" ${g.started?'disabled':''}>${[1,2,3].map(n=>`<option ${n===g.teams.length?'selected':''}>${n}</option>`).join('')}</select></label></div><div class="team-inputs">${g.teams.map((t,i)=>field(`Команда ${i+1}`,'team-name',t.name,`data-setting="team-name" data-id="${t.id}" maxlength="60"`)).join('')}</div></section><section class="panel"><div class="section-top"><div><h2>Раунды</h2><p class="muted">До 6 тем, по 5 вопросов. Цены общие для раунда.</p></div>${btn('+ Раунд','add-round',g.started?'disabled':'','small')}</div><div class="round-tabs">${g.rounds.map(r=>btn(esc(r.name),'setup-round',`data-id="${r.id}"`,roundId===r.id?'selected':'')).join('')}</div>${r?`<div class="section-top round-settings">${field('Название раунда','round-name',r.name,`data-setting="round-name" data-id="${r.id}" maxlength="80" ${g.started?'disabled':''}`)}${btn('Удалить раунд','delete-round',`data-id="${r.id}" ${g.started?'disabled':''}`,'quiet danger small')}</div><div class="prices">${r.prices.map((p,i)=>field(`Цена ${i+1}`,'price',p,`type="number" min="1" max="1000000" step="1" data-setting="price" data-id="${r.id}" data-index="${i}" ${g.started?'disabled':''}`)).join('')}</div><div class="topic-editor">${r.topics.map((t,ti)=>`<details class="topic-details" ${ti===0?'open':''}><summary><span>${esc(t.name)}</span><span class="muted">${t.cells.filter(c=>c.cat||!C.questionIssues(c.question).length).length} / 5 заполнено</span></summary><div class="topic-tools">${field('Название на поле','topic-name',t.name,`data-setting="topic-name" data-id="${t.id}" data-round="${r.id}" ${g.started?'disabled':''}`)}${btn('Убрать тему','delete-topic',`data-id="${t.id}" data-round="${r.id}" ${g.started?'disabled':''}`,'quiet danger small')}</div><div class="cell-editor-grid">${t.cells.map((c,i)=>`<button class="edit-cell ${c.played?'played':''}" data-act="edit-cell" data-id="${c.id}" ${c.played||g.active?.cellId===c.id||g.finished?'disabled':''}><span class="cell-price">${num(r.prices[i])}</span><span class="cell-question">${c.cat?'Кот в мешке':esc(c.question?.text || (c.question?.image?'Вопрос с картинкой':'Назначить вопрос'))}</span><span class="cell-flags">${c.played?'Сыгран':`${c.cat?'КОТ ':''}${c.modifier?'ЭФФЕКТ ':''}${!c.cat&&C.questionIssues(c.question).length?'НЕ ЗАПОЛНЕН':''}`}</span></button>`).join('')}</div></details>`).join('')}</div><div class="add-topic"><label>Тема из банка<select id="theme-to-add" ${g.started||r.topics.length>=6?'disabled':''}><option value="">Выберите тему</option>${b.themes.map(t=>`<option value="${t.id}" ${r.topics.some(x=>x.themeId===t.id)?'disabled':''}>${esc(t.name)}</option>`).join('')}</select></label>${btn('Добавить тему','add-topic',`${g.started||r.topics.length>=6?'disabled':''}`)}</div>`:'<p class="empty">Добавьте первый раунд.</p>'}</section><section class="panel"><h2>Пулы на всю игру</h2><p class="muted">${g.started?'Пулы зафиксированы при старте. Изменения банка войдут в следующую игру.':'Выберите, что может случайно выпасть в специальных клетках. Модификаторы могут повторяться.'}</p><div class="form-grid"><div><h3>Коты в мешке</h3>${b.cats.map(q=>`<label class="check-row"><input type="checkbox" data-setting="cat-pool" value="${q.id}" ${g.catPool.includes(q.id)?'checked':''} ${g.started?'disabled':''}><span>${esc(q.text || 'Вопрос с картинкой')}</span></label>`).join('') || '<p class="muted">Добавьте котов в банке.</p>'}</div><div><h3>Модификаторы</h3>${b.modifiers.map(m=>`<label class="check-row"><input type="checkbox" data-setting="mod-pool" value="${m.id}" ${g.modPool.includes(m.id)?'checked':''} ${g.started?'disabled':''}><span>${esc(m.name)}</span></label>`).join('') || '<p class="muted">Создайте модификатор в банке.</p>'}</div></div></section>${finalSettings(S(),viewTools())}</div><aside class="setup-aside"><section class="panel readiness"><div class="readiness-symbol ${errors.length?'amber':''}">${svg(errors.length?'sliders':'check')}</div><h2>${errors.length?'Ещё немного подготовки':'Всё готово'}</h2><p class="muted">${errors.length?`Нужно исправить: ${errors.length}`:'Вопросы назначены, команды ждут.'}</p>${errors.length?`<ul class="error-list">${errors.map(e=>`<li>${esc(e)}</li>`).join('')}</ul>`:'<p class="ready-line">Можно начинать вечер</p>'}<div class="stack">${btn(g.started?'Продолжить игру':'Начать игру','play',errors.length&&!g.started?'disabled':'','primary')}${btn('Репетиция','rehearse')}<p class="tiny muted">Репетиция доступна даже для неполной игры. Настоящий прогресс не изменится.</p></div></section>${backupPanel()}<section class="panel reset-panel"><h3>Начать заново</h3><p class="muted">Сбросить счёт и прогресс, сохранив поле и банк вопросов.</p>${btn('Сбросить прогресс','reset','','quiet danger')}${btn('Новая пустая игра','new-game','','quiet danger')}</section></aside></main>`;
+  return `${header('Настройка игры','Подготовьте поле — и собирайте команды.')}<main class="page-shell setup-shell"><div class="setup-main"><section class="panel"><div class="section-top"><h2>Игра и команды</h2><span class="badge">${g.started?'Игра начата':'Подготовка'}</span></div><div class="form-grid">${field('Название вечера','game-title',g.title,'data-setting="title" maxlength="100"')}<label>Количество команд<select data-setting="team-count" ${g.started?'disabled':''}>${[1,2,3].map(n=>`<option ${n===g.teams.length?'selected':''}>${n}</option>`).join('')}</select></label></div><div class="team-inputs">${g.teams.map((t,i)=>field(`Команда ${i+1}`,'team-name',t.name,`data-setting="team-name" data-id="${t.id}" maxlength="60"`)).join('')}</div></section><section class="panel"><div class="section-top"><div><h2>Раунды</h2><p class="muted">До 6 тем, по 5 вопросов. Цены общие для раунда.</p></div>${btn('+ Раунд','add-round',g.started?'disabled':'','small')}</div><div class="round-tabs">${g.rounds.map(r=>btn(esc(r.name),'setup-round',`data-id="${r.id}"`,roundId===r.id?'selected':'')).join('')}</div>${r?`<div class="section-top round-settings">${field('Название раунда','round-name',r.name,`data-setting="round-name" data-id="${r.id}" maxlength="80" ${g.started?'disabled':''}`)}${btn('Удалить раунд','delete-round',`data-id="${r.id}" ${g.started?'disabled':''}`,'quiet danger small')}</div><div class="prices">${r.prices.map((p,i)=>field(`Цена ${i+1}`,'price',p,`type="number" min="1" max="1000000" step="1" data-setting="price" data-id="${r.id}" data-index="${i}" ${g.started?'disabled':''}`)).join('')}</div><div class="topic-editor">${r.topics.map((t,ti)=>`<details class="topic-details" ${ti===0?'open':''}><summary><span>${esc(t.name)}</span><span class="muted">${t.cells.filter(c=>c.cat||!C.questionIssues(c.question).length).length} / 5 заполнено</span></summary><div class="topic-tools">${field('Название на поле','topic-name',t.name,`data-setting="topic-name" data-id="${t.id}" data-round="${r.id}" ${g.started?'disabled':''}`)}${btn('Убрать тему','delete-topic',`data-id="${t.id}" data-round="${r.id}" ${g.started?'disabled':''}`,'quiet danger small')}</div><div class="cell-editor-grid">${t.cells.map((c,i)=>`<button class="edit-cell ${c.played?'played':''}" data-act="edit-cell" data-id="${c.id}" ${c.played||g.active?.cellId===c.id||g.finished?'disabled':''}><span class="cell-price">${num(r.prices[i])}</span><span class="cell-question">${c.cat?'Кот в мешке':esc(c.question?.text || (c.question ? questionLabel(c.question) : 'Назначить вопрос'))}</span><span class="cell-flags">${c.played?'Сыгран':`${c.cat?'КОТ ':''}${c.modifier?'ЭФФЕКТ ':''}${!c.cat&&C.questionIssues(c.question).length?'НЕ ЗАПОЛНЕН':''}`}</span></button>`).join('')}</div></details>`).join('')}</div><div class="add-topic"><label>Тема из банка<select id="theme-to-add" ${g.started||r.topics.length>=6?'disabled':''}><option value="">Выберите тему</option>${b.themes.map(t=>`<option value="${t.id}" ${r.topics.some(x=>x.themeId===t.id)?'disabled':''}>${esc(t.name)}</option>`).join('')}</select></label>${btn('Добавить тему','add-topic',`${g.started||r.topics.length>=6?'disabled':''}`)}</div>`:'<p class="empty">Добавьте первый раунд.</p>'}</section><section class="panel"><h2>Пулы на всю игру</h2><p class="muted">${g.started?'Пулы зафиксированы при старте. Изменения банка войдут в следующую игру.':'Выберите, что может случайно выпасть в специальных клетках. Модификаторы могут повторяться.'}</p><div class="form-grid"><div><h3>Коты в мешке</h3>${b.cats.map(q=>`<label class="check-row"><input type="checkbox" data-setting="cat-pool" value="${q.id}" ${g.catPool.includes(q.id)?'checked':''} ${g.started?'disabled':''}><span>${esc(q.text || questionLabel(q))}</span></label>`).join('') || '<p class="muted">Добавьте котов в банке.</p>'}</div><div><h3>Модификаторы</h3>${b.modifiers.map(m=>`<label class="check-row"><input type="checkbox" data-setting="mod-pool" value="${m.id}" ${g.modPool.includes(m.id)?'checked':''} ${g.started?'disabled':''}><span>${esc(m.name)}</span></label>`).join('') || '<p class="muted">Создайте модификатор в банке.</p>'}</div></div></section>${finalSettings(S(),viewTools())}</div><aside class="setup-aside"><section class="panel readiness"><div class="readiness-symbol ${errors.length?'amber':''}">${svg(errors.length?'sliders':'check')}</div><h2>${errors.length?'Ещё немного подготовки':'Всё готово'}</h2><p class="muted">${errors.length?`Нужно исправить: ${errors.length}`:'Вопросы назначены, команды ждут.'}</p>${errors.length?`<ul class="error-list">${errors.map(e=>`<li>${esc(e)}</li>`).join('')}</ul>`:'<p class="ready-line">Можно начинать вечер</p>'}<div class="stack">${btn(g.started?'Продолжить игру':'Начать игру','play',errors.length&&!g.started?'disabled':'','primary')}${btn('Репетиция','rehearse')}<p class="tiny muted">Репетиция доступна даже для неполной игры. Настоящий прогресс не изменится.</p></div></section>${backupPanel()}<section class="panel reset-panel"><h3>Начать заново</h3><p class="muted">Сбросить счёт и прогресс, сохранив поле и банк вопросов.</p>${btn('Сбросить прогресс','reset','','quiet danger')}${btn('Новая пустая игра','new-game','','quiet danger')}</section></aside></main>`;
 }
-const viewTools = () => ({esc,btn,num,signed,svg,image});
+const viewTools = () => ({esc,btn,num,signed,svg,questionContent,questionLabel});
 function scoreBoard() {
   const g = G(), a = g.active, fr=g.final?.run, finalTeam=fr?.stage==='review'?fr.order[fr.index]:'';
   return `<footer class="scoreboard" aria-label="Табло команд">${g.teams.map((t,i)=>`<div class="score-team team-${i} ${(a?.answeringTeamId===t.id||finalTeam===t.id)?'answering':''}">${finalTeam===t.id?`<div class="answer-verdict" aria-label="Оценка финального ответа ${esc(t.name)}"><span>Финал · ставка ${num(fr.bets[t.id])}</span>${btn(`Правильно · ${signed(fr.bets[t.id])}`,'final-judge',`data-id="${t.id}" data-correct="true"`,'verdict-correct')}${btn(`Неправильно · ${signed(-fr.bets[t.id])}`,'final-judge',`data-id="${t.id}" data-correct="false"`,'verdict-wrong')}</div>`:''}${a?.stage==='question'&&a.answeringTeamId===t.id?`<div class="answer-verdict" aria-label="Оценка ответа ${esc(t.name)}"><span>Отвечает ${esc(t.name)}</span>${btn(`Правильно · ${signed(C.scoreDelta(a.price,a.modifier,1))}`,'judge',`data-id="${t.id}" data-correct="true"`,'verdict-correct')}${btn(`Неправильно · ${signed(C.scoreDelta(a.price,a.modifier,-1))}`,'judge',`data-id="${t.id}" data-correct="false"`,'verdict-wrong')}</div>`:''}<button class="score-main" data-act="manual-score" data-id="${t.id}" aria-label="Изменить счёт ${esc(t.name)}"><span class="team-name">${esc(t.name)}</span><strong>${signed(t.score)}</strong></button></div>`).join('')}</footer>`;
 }
-function image(url, alt) {
-  const safe = C.safeUrl(url);
-  return safe ? `<figure class="media"><img src="${esc(safe)}" alt="${alt}" referrerpolicy="no-referrer"><figcaption hidden>Изображение недоступно. Проверьте ссылку и подключение к интернету.</figcaption></figure>` : '';
+function mediaFigure(source, kind, label) {
+  const src = `data-media-src="${esc(source.src)}"`;
+  const name = esc(label);
+  const link = `<a class="media-link" href="${esc(source.link)}" target="_blank" rel="noopener noreferrer">Открыть отдельно</a>`;
+  if (source.kind === 'drive') {
+    return `<figure class="media media-player"><iframe ${src} title="${name}" allow="fullscreen" allowfullscreen></iframe>${link}</figure>`;
+  }
+  const player = kind === 'video'
+    ? `<video ${src} aria-label="${name}" controls playsinline preload="metadata"></video>`
+    : `<img ${src} alt="${name}" referrerpolicy="no-referrer">`;
+  return `<figure class="media ${kind === 'video' ? 'media-player' : ''}">${player}
+    <figcaption hidden>${kind === 'video' ? 'Видео недоступно.' : 'Картинка недоступна.'} Проверьте ссылку. ${link}</figcaption>
+  </figure>`;
+}
+function questionContent(question, answer, screenId) {
+  const title = answer ? 'Правильный ответ' : 'Вопрос';
+  const text = (answer ? question.answer : question.text) || '';
+  const { url, kind } = questionMedia(question, answer);
+  const source = mediaSource(url, kind);
+  const key = source ? JSON.stringify([screenId, answer, text, kind, source.src]) : '';
+  const figure = source ? mediaFigure(source, kind, title)
+    : url ? '<figure class="media"><figcaption>Ссылка недоступна. Проверьте её в редакторе.</figcaption></figure>' : '';
+  return `<div class="question-content ${url ? 'with-image' : ''} ${text ? '' : 'media-only'}" data-media-key="${esc(key)}">
+    <h1 class="${text ? '' : 'sr-only'}">${esc(text || title)}</h1>${figure}
+  </div>`;
+}
+function mountMedia(root) {
+  for (const element of root.querySelectorAll('[data-media-src]:not([src])')) {
+    element.src = element.dataset.mediaSrc;
+  }
+}
+function showMediaError(event) {
+  const media = event.target;
+  if (!media.matches?.('.media img, .media video')) return;
+  media.hidden = true;
+  media.nextElementSibling.hidden = false;
+}
+app.addEventListener('error', showMediaError, true);
+editor.addEventListener('error', showMediaError, true);
+
+function previewMedia(button) {
+  const fieldset = button.closest('.editor-media');
+  const kind = fieldset.querySelector('select').value;
+  const url = fieldset.querySelector('input').value.trim();
+  const preview = fieldset.querySelector('.editor-media-preview');
+  const otherPreview = [...editor.querySelectorAll('.editor-media-preview')].find(element => element !== preview);
+  otherPreview?.replaceChildren();
+  const source = mediaSource(url, kind);
+  preview.innerHTML = source ? mediaFigure(source, kind, button.getAttribute('aria-label'))
+    : '<p class="form-error" role="status">Вставьте прямую ссылку на файл или ссылку Google Диска.</p>';
+  mountMedia(preview);
 }
 function game() {
   const g = G(), a = g.active, r = g.rounds.find(r=>r.id===g.roundId) || g.rounds[0];
@@ -118,7 +196,7 @@ function game() {
     body = `<section class="question-stage">
       <div class="question-meta"><span>${esc(a.topic)}</span><span class="price-pill">${num(a.price)} баллов${a.modifier?' · '+esc(a.modifier.name):''}</span></div>
       <p class="eyebrow">${answer?'ПРАВИЛЬНЫЙ ОТВЕТ':'ВОПРОС'}</p>
-      <div class="question-content ${((answer?q.answerImage:q.image))?'with-image':''}"><h1 class="${(answer?q.answer:q.text)?'':'sr-only'}">${esc((answer?q.answer:q.text)||(answer?'Правильный ответ':'Вопрос'))}</h1>${image(answer?q.answerImage:q.image,answer?'Изображение ответа':'Изображение вопроса')}</div>
+      ${questionContent(q, answer, a.cellId)}
       ${!answer?`<div class="answering-controls"><span class="muted-light">${a.attempts.length===g.teams.length?'Все команды ответили неверно':a.attempts.length?'Кто перехватывает?':'Кто отвечает?'}</span>${g.teams.map(t=>btn(esc(t.name),'answering',`data-id="${t.id}" ${a.attempts.includes(t.id)||(a.cat&&!a.attempts.length&&a.teamId!==t.id)?'disabled':''}`,a.answeringTeamId===t.id?'selected':'on-dark')).join('')}</div><p class="tiny muted-light">${a.answeringTeamId?'Оцените ответ кнопками над табло выбранной команды.':'Выберите команду или покажите ответ без дополнительного начисления.'}</p>`:`<p class="muted-light">${a.resolution?.correct===true?`${esc(g.teams.find(t=>t.id===a.resolution.teamId)?.name)}: ${signed(a.resolution.delta)}. Баллы уже начислены.`:'Ответ раскрыт без дополнительных начислений. Предыдущие штрафы сохранены.'}</p>`}
       <div class="question-actions">${answer?btn('Завершить вопрос','close-question','','primary light'):btn('Показать ответ','reveal','','primary light')}${!answer?btn('Закрыть без ответа','close-question','','on-dark'):''}${a.attempts.length?`<span class="tiny muted-light">Уже отвечали: ${a.attempts.map(id=>esc(g.teams.find(t=>t.id===id)?.name)).join(', ')}</span>`:''}</div>
     </section>`;
@@ -129,14 +207,38 @@ function game() {
   return `${header('', '', true)}<main class="game-shell">${body}</main>${scoreBoard()}`;
 }
 let lastScreen = '';
+function replaceSiblings(anchor, replacement) {
+  const before = [], after = [];
+  for (let node = replacement.previousSibling; node; node = node.previousSibling) before.unshift(node);
+  for (let node = replacement.nextSibling; node; node = node.nextSibling) after.push(node);
+  for (const node of [...anchor.parentNode.childNodes]) {
+    if (node !== anchor) node.remove();
+  }
+  anchor.before(...before);
+  anchor.after(...after);
+}
+function renderApp(html) {
+  const template = document.createElement('template');
+  template.innerHTML = html;
+  const previous = app.querySelector('.question-content[data-media-key]');
+  const next = template.content.querySelector('.question-content[data-media-key]');
+  if (previous?.dataset.mediaKey && previous.dataset.mediaKey === next?.dataset.mediaKey) {
+    // Keep the player and its ancestors attached while replacing the stage controls and scoreboard.
+    replaceSiblings(previous.closest('.game-shell'), next.closest('.game-shell'));
+    replaceSiblings(previous, next);
+  } else {
+    for (const video of app.querySelectorAll('.media video')) video.pause();
+    app.replaceChildren(template.content);
+  }
+  mountMedia(app);
+}
 function render() {
   const screen = `${page}:${G().active?.cellId||''}:${G().active?.stage||''}:${G().finished}:${G().final?.run?.stage||''}:${G().final?.run?.index||0}`;
   document.body.classList.toggle('is-game', page==='game');
   document.body.classList.toggle('is-rehearsal', !!rehearsal);
   document.body.classList.toggle('has-verdict', (G().active?.stage==='question'&&!!G().active.answeringTeamId)||G().final?.run?.stage==='review');
   if(screen!==lastScreen) { window.scrollTo(0,0); lastScreen=screen; }
-  app.innerHTML = warnings() + (page==='home'?home():page==='bank'?bank():page==='setup'?setup():game());
-  for (const img of app.querySelectorAll('.media img')) img.addEventListener('error',()=>{ img.hidden=true; img.nextElementSibling.hidden=false; });
+  renderApp(warnings() + (page==='home'?home():page==='bank'?bank():page==='setup'?setup():game()));
 }
 let modalHandler = null, restoreFocus;
 function modal(title, content, handler, submit = 'Сохранить') {
@@ -144,7 +246,16 @@ function modal(title, content, handler, submit = 'Сохранить') {
   editor.innerHTML = `<form id="modal-form"><div class="modal-heading"><h2>${esc(title)}</h2>${btn('×','close-modal','aria-label="Закрыть"','quiet modal-close')}</div><div class="modal-body">${content}</div><p class="form-error" role="alert"></p><div class="modal-actions">${btn('Отмена','close-modal')}<button class="primary" type="submit">${submit}</button></div></form>`;
   modalHandler = handler; editor.showModal();
 }
-editor.addEventListener('close',()=>{modalHandler=null;restoreFocus?.focus();});
+editor.addEventListener('close',()=>{
+  modalHandler=null;
+  for (const preview of editor.querySelectorAll('.editor-media-preview')) preview.replaceChildren();
+  restoreFocus?.focus();
+});
+editor.addEventListener('input', e => {
+  if (e.target.matches('[data-media-input]')) {
+    e.target.closest('.editor-media').querySelector('.editor-media-preview').replaceChildren();
+  }
+});
 editor.addEventListener('submit', e=>{
   e.preventDefault();
   if (conflict&&!rehearsal) { editor.querySelector('.form-error').textContent='Обновите страницу: данные изменились в другой вкладке.'; return; }
@@ -155,9 +266,8 @@ editor.addEventListener('submit', e=>{
 function questionModal(kind, id, tid) {
   const list = kind==='cat'?S().bank.cats:S().bank.themes.find(t=>t.id===tid).questions;
   const q = list.find(q=>q.id===id) || C.blankQuestion();
-  modal(kind==='cat'?'Кот в мешке':'Редактор вопроса',qFields(q)+`<p class="tiny muted">Для вопроса и ответа достаточно текста или картинки. Пустые черновики можно сохранить; проверка готовности обнаружит их.</p>`,f=>{
+  modal(kind==='cat'?'Кот в мешке':'Редактор вопроса',qFields(q)+`<p class="tiny muted">Для каждой стороны можно использовать текст, картинку или видео. Подходят прямые ссылки на файлы и ссылки Google Диска с доступом по ссылке.</p>`,f=>{
     const updated=qFromForm(f,q.id);
-    for (const key of ['image','answerImage']) if(updated[key]&&!C.safeUrl(updated[key])) throw new Error('Используйте полный URL картинки, начинающийся с https:// или http://.');
     const target=kind==='cat'?S().bank.cats:S().bank.themes.find(t=>t.id===tid).questions;
     const index=target.findIndex(x=>x.id===id); if(index<0)target.push(updated);else target[index]=updated;
   });
@@ -166,11 +276,10 @@ function cellModal(id) {
   const g=G(), { cell:c, round:r, topic:t,index }=C.editableCell(g,id);
   const used=new Set([...g.rounds.flatMap(r=>r.topics.flatMap(t=>t.cells.filter(c=>c.id!==id&&!c.cat).map(c=>c.questionId))),...(g.final?.enabled?g.final.topics.map(t=>t.questionId):[])]);
   const q=c.question||C.blankQuestion();
-  modal(`${t.name} · ${num(r.prices[index])}`,`<label>Вопрос из банка<select name="questionId" id="cell-question"><option value="">Собственный вопрос для этой клетки</option>${S().bank.themes.map(t=>`<optgroup label="${esc(t.name)}">${t.questions.map(q=>`<option value="${q.id}" ${q.id===c.questionId?'selected':''} ${used.has(q.id)?'disabled':''}>${esc(q.text.slice(0,85)||'Вопрос с картинкой')}${used.has(q.id)?' (уже назначен)':''}</option>`).join('')}</optgroup>`).join('')}</select></label><div class="cell-special-flags"><label class="check-row"><input name="cat" type="checkbox" ${c.cat?'checked':''}><span>Кот в мешке</span></label><label class="check-row"><input name="modifier" type="checkbox" ${c.modifier?'checked':''}><span>Модификатор</span></label></div><p class="tiny muted">Кот заменяет вопрос ниже случайным из пула. Обе механики можно совместить. На игровом поле они скрыты до открытия.</p><div id="cell-fields">${qFields(q)}</div>`,f=>{
+  modal(`${t.name} · ${num(r.prices[index])}`,`<label>Вопрос из банка<select name="questionId" id="cell-question"><option value="">Собственный вопрос для этой клетки</option>${S().bank.themes.map(t=>`<optgroup label="${esc(t.name)}">${t.questions.map(q=>`<option value="${q.id}" ${q.id===c.questionId?'selected':''} ${used.has(q.id)?'disabled':''}>${esc(q.text.slice(0,85)||questionLabel(q))}${used.has(q.id)?' (уже назначен)':''}</option>`).join('')}</optgroup>`).join('')}</select></label><div class="cell-special-flags"><label class="check-row"><input name="cat" type="checkbox" ${c.cat?'checked':''}><span>Кот в мешке</span></label><label class="check-row"><input name="modifier" type="checkbox" ${c.modifier?'checked':''}><span>Модификатор</span></label></div><p class="tiny muted">Кот заменяет вопрос ниже случайным из пула. Обе механики можно совместить. На игровом поле они скрыты до открытия.</p><div id="cell-fields">${qFields(q)}</div>`,f=>{
     const found=C.editableCell(G(),id), cat=f.has('cat');
     let qid=f.get('questionId') || (c.questionId?.startsWith('local-')?c.questionId:'local-'+C.uid());
     const updated=qFromForm(f,qid);
-    for(const key of ['image','answerImage'])if(updated[key]&&!C.safeUrl(updated[key]))throw new Error('Проверьте URL картинки.');
     found.cell.cat=cat;
     if(!cat)C.assignQuestion(G(),id,updated);else {found.cell.question=updated;found.cell.questionId=qid;}
     found.cell.modifier=f.has('modifier');
@@ -195,7 +304,7 @@ function jsonPreview(imported, filename) {
   },'Восстановить игру');
 }
 function excelPreview(plan, filename) {
-  modal('Импорт вопросов из Excel',`<p class="muted">${esc(filename)}</p><dl class="import-summary"><div><dt>Новых вопросов</dt><dd>${num(plan.count)}</dd></div><div><dt>Темы</dt><dd>${num(plan.newThemes)} новых · ${num(plan.existingThemes)} существующих</dd></div><div><dt>Повторы</dt><dd>${num(plan.duplicates)} — будут пропущены</dd></div></dl>${plan.errors.length?`<div class="import-errors"><h3>Исправьте ошибки: ${num(plan.errors.length)}</h3><ul>${plan.errors.slice(0,100).map(e=>`<li>${esc(e)}</li>`).join('')}</ul>${plan.errors.length>100?'<p>Показаны первые 100 ошибок.</p>':''}</div>`:''}${!plan.count&&!plan.errors.length?'<p class="warning inline-warning">Новых вопросов нет: таблица пуста или все строки уже есть в банке.</p>':''}<div class="import-preview">${plan.themes.map(t=>`<section><h3>${esc(t.name)} <small>${t.themeId?'добавление в тему':'новая тема'}</small></h3><ul>${t.questions.slice(0,15).map(q=>`<li>${esc(q.text || 'Вопрос с картинкой')}</li>`).join('')}</ul>${t.questions.length>15?`<p class="muted">И ещё ${num(t.questions.length-15)} вопросов.</p>`:''}</section>`).join('')}</div><p class="tiny muted">Импорт добавляет вопросы только в банк. Назначения клеток и прогресс игры сохраняются.</p>`,()=>{
+  modal('Импорт вопросов из Excel',`<p class="muted">${esc(filename)}</p><dl class="import-summary"><div><dt>Новых вопросов</dt><dd>${num(plan.count)}</dd></div><div><dt>Темы</dt><dd>${num(plan.newThemes)} новых · ${num(plan.existingThemes)} существующих</dd></div><div><dt>Повторы</dt><dd>${num(plan.duplicates)} — будут пропущены</dd></div></dl>${plan.errors.length?`<div class="import-errors"><h3>Исправьте ошибки: ${num(plan.errors.length)}</h3><ul>${plan.errors.slice(0,100).map(e=>`<li>${esc(e)}</li>`).join('')}</ul>${plan.errors.length>100?'<p>Показаны первые 100 ошибок.</p>':''}</div>`:''}${!plan.count&&!plan.errors.length?'<p class="warning inline-warning">Новых вопросов нет: таблица пуста или все строки уже есть в банке.</p>':''}<div class="import-preview">${plan.themes.map(t=>`<section><h3>${esc(t.name)} <small>${t.themeId?'добавление в тему':'новая тема'}</small></h3><ul>${t.questions.slice(0,15).map(q=>`<li>${esc(q.text || questionLabel(q))}</li>`).join('')}</ul>${t.questions.length>15?`<p class="muted">И ещё ${num(t.questions.length-15)} вопросов.</p>`:''}</section>`).join('')}</div><p class="tiny muted">Импорт добавляет вопросы только в банк. Назначения клеток и прогресс игры сохраняются.</p>`,()=>{
     applyQuestionImport(S(),plan);bankTab='themes';themeId=S().bank.themes.find(t=>t.name===plan.themes[0]?.name)?.id;search='';
   },'Добавить вопросы');
   editor.querySelector('[type="submit"]').disabled=!!plan.errors.length||!plan.count;
@@ -236,6 +345,7 @@ async function goHome() {
 async function action(act, el) {
   const id=el.dataset.id, g=G(), b=S().bank;
   if(act==='close-modal')return editor.close();
+  if(act==='preview-media')return previewMedia(el);
   if(act==='undo')return undoLast();
   if(act==='import-excel')return document.querySelector('#excel-input').click();
   if(act==='import-json')return document.querySelector('#json-input').click();
@@ -346,7 +456,7 @@ document.addEventListener('change',e=>{
   },false);
   if(el.id==='cell-question'){
     const q=S().bank.themes.flatMap(t=>t.questions).find(q=>q.id===el.value);
-    if(q)for(const key of ['text','image','answer','answerImage'])editor.querySelector(`[name="${key}"]`).value=q[key];
+    if(q)editor.querySelector('#cell-fields').innerHTML=qFields(q);
     return;
   }
   if(el.id==='game-round')return mutate(s=>{s.game.roundId=el.value;});

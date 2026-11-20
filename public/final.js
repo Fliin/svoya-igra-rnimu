@@ -1,4 +1,4 @@
-import { clone, uid, blankFinal, finalReadiness, questionIssues, blankQuestion } from './core.js?v=20261120-transfer';
+import { clone, uid, blankFinal, finalReadiness, questionIssues, blankQuestion } from './core.js?v=20261120-media';
 
 export const blankFinalTopic = () => ({ id:uid(), themeId:'', name:'', questionId:'', question:null });
 export function configureFinal(g, enabled) {

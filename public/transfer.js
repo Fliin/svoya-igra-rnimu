@@ -1,10 +1,13 @@
-import { clone, uid, validSavedState, validModifier, safeUrl, questionIssues } from './core.js?v=20261120-transfer';
-import { validateFinalState } from './final.js';
+import { clone, uid, validSavedState, validModifier, safeUrl, questionIssues } from './core.js?v=20261120-media';
+import { validateFinalState } from './final.js?v=20261120-media';
+import { mediaIssues } from './media.js?v=20261120-media';
 
 export const BACKUP_FORMAT = 'pirozhkova-game-backup';
 export const BACKUP_VERSION = 1;
 export const MAX_FILE_SIZE = 16 * 1024 * 1024;
-export const EXCEL_HEADERS = ['Тема', 'Вопрос', 'Ответ', 'Ссылка на картинку вопроса', 'Ссылка на картинку ответа'];
+const questionFields = ['text', 'answer', 'image', 'answerImage', 'video', 'answerVideo'];
+export const EXCEL_HEADERS = ['Тема', 'Вопрос', 'Ответ', 'Ссылка на картинку вопроса', 'Ссылка на картинку ответа',
+  'Ссылка на видео вопроса', 'Ссылка на видео ответа'];
 const norm = x => String(x ?? '').trim().replace(/\s+/g, ' ').toLocaleLowerCase('ru-RU');
 const assert = (condition, message) => { if (!condition) throw new Error(message); };
 const string = x => typeof x === 'string' && x.length <= 100000;
@@ -13,6 +16,11 @@ const unique = values => new Set(values).size === values.length;
 function checkQuestion(q) {
   assert(q && id(q.id) && ['text', 'answer', 'image', 'answerImage'].every(k => string(q[k])), 'Повреждены поля вопроса или ответа.');
   for (const k of ['image', 'answerImage']) assert(!q[k] || safeUrl(q[k]), 'В резервной копии есть некорректная ссылка на картинку.');
+  assert(['video', 'answerVideo'].every(k => q[k] === undefined || string(q[k])), 'Повреждены ссылки на видео.');
+  if (q.video || q.answerVideo) {
+    const issues = mediaIssues(q);
+    assert(!issues.length, issues[0]);
+  }
 }
 function checkModifier(m) { assert(validModifier(m) && id(m.id) && string(m.description), 'В резервной копии повреждён модификатор.'); }
 export function validateBackupState(input) {
@@ -93,7 +101,7 @@ export function backupSummary(state) {
     cells: g.rounds.reduce((n,r) => n + r.topics.length * 5, 0), played: g.rounds.flatMap(r => r.topics.flatMap(t => t.cells)).filter(c => c.played).length,
     teams: clone(g.teams), cats: state.bank.cats.length, modifiers: state.bank.modifiers.length, active: g.active?.topic || '', started: g.started, finished: g.finished, finalStage:g.final?.run?.stage||'', finalEnabled:!!g.final?.enabled };
 }
-const fingerprint = q => JSON.stringify([q.text, q.answer, q.image, q.answerImage].map(x => String(x || '').trim().replace(/\r\n/g, '\n')));
+const fingerprint = q => JSON.stringify(questionFields.map(k => (q[k] || '').trim().replace(/\r\n/g, '\n')));
 export function planQuestionImport(rows, bank) {
   assert(Array.isArray(rows) && rows.length > 1, 'В таблице нет вопросов.');
   assert(rows.length <= 10002, 'За один раз можно импортировать до 10 000 строк.');
@@ -104,16 +112,17 @@ export function planQuestionImport(rows, bank) {
   for (let i = 1; i < rows.length; i++) {
     const row = rows[i] || [];
     if (!row.some(x => String(x ?? '').trim())) { blank++; continue; }
-    const [name, text, answer, image, answerImage] = positions.map(p => p < 0 ? '' : String(row[p] ?? '').trim());
-    const issues = questionIssues({text, answer, image, answerImage});
+    const [name, ...values] = positions.map(p => p < 0 ? '' : String(row[p] ?? '').trim());
+    const q = Object.fromEntries(questionFields.map((key, index) => [key, values[index]]));
+    const issues = questionIssues(q);
     if (!name) issues.unshift('не указана тема');
     if (name.length > 80) issues.unshift('название темы длиннее 80 символов');
-    if ([text, answer, image, answerImage].some(x => x.length > 100000)) issues.push('слишком длинное содержимое ячейки');
+    if (values.some(x => x.length > 100000)) issues.push('слишком длинное содержимое ячейки');
     if (issues.length) { errors.push(`Строка ${i+1}: ${issues.join('; ')}.`); continue; }
     const key = norm(name), matches = bank.themes.filter(t => norm(t.name) === key);
     if (matches.length > 1) { errors.push(`Строка ${i+1}: в банке несколько тем «${name}». Сначала переименуйте одну из них.`); continue; }
     if (!groups.has(key)) groups.set(key, { name: matches[0]?.name || name, themeId: matches[0]?.id || '', questions: [], seen: new Set((matches[0]?.questions || []).map(fingerprint)) });
-    const group = groups.get(key), q = { text, answer, image, answerImage }, mark = fingerprint(q);
+    const group = groups.get(key), mark = fingerprint(q);
     if (group.seen.has(mark)) { duplicates++; continue; }
     group.seen.add(mark); group.questions.push({ ...q, row: i+1 });
   }
@@ -124,7 +133,7 @@ export function planQuestionImport(rows, bank) {
 export function applyQuestionImport(state, plan) {
   assert(plan && !plan.errors.length && plan.count > 0, 'Сначала исправьте ошибки в таблице.');
   // Recheck the preview against the current bank before committing the whole import.
-  const rows = [EXCEL_HEADERS, ...plan.themes.flatMap(t => t.questions.map(q => [t.name, q.text, q.answer, q.image, q.answerImage]))];
+  const rows = [EXCEL_HEADERS, ...plan.themes.flatMap(t => t.questions.map(q => [t.name, ...questionFields.map(k => q[k])]))];
   const fresh = planQuestionImport(rows, state.bank);
   assert(!fresh.errors.length && fresh.count === plan.count, 'Банк изменился после предпросмотра. Выберите файл заново.');
   for (const group of fresh.themes) {

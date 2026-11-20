@@ -10,7 +10,7 @@ test('Неполная игра не запускается, но репетиц
 test('Проверки цен, команд, размеров поля и пустых ответов',()=>{
   const s=seedState();s.game.teams[1].name=s.game.teams[0].name;s.game.rounds[0].prices[2]=0;
   s.game.rounds[0].topics.push(C.clone(s.game.rounds[0].topics[0]));regular(s).question.answer='';
-  const errors=C.readiness(s).join(' ');assert.match(errors,/Названия команд/);assert.match(errors,/5 положительных/);assert.match(errors,/до 6 тем/);assert.match(errors,/нет текста или картинки ответа/);
+  const errors=C.readiness(s).join(' ');assert.match(errors,/Названия команд/);assert.match(errors,/5 положительных/);assert.match(errors,/до 6 тем/);assert.match(errors,/нет текста, картинки или видео ответа/);
 });
 test('Повторы вопросов запрещены между раундами; темы повторять можно',()=>{
   const s=seedState(), r=C.blankRound('Раунд 2');r.topics=[C.topicFromTheme(s.bank.themes[0],true)];s.game.rounds.push(r);

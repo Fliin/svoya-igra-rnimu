@@ -1,3 +1,6 @@
+import { mediaIssues, mediaSource, questionMedia } from './media.js?v=20261120-media';
+export { safeUrl } from './media.js?v=20261120-media';
+
 export const clone = value => JSON.parse(JSON.stringify(value));
 export const uid = () => globalThis.crypto.randomUUID();
 export const DEFAULT_GAME_TITLE = 'Корпорация Пирожкова';
@@ -17,19 +20,16 @@ export function topicFromTheme(theme, assign = false) {
     return cell;
   }) };
 }
-export const safeUrl = url => {
-  if (!url) return '';
-  try { const u = new URL(url); return ['https:', 'http:'].includes(u.protocol) ? u.href : ''; } catch { return ''; }
-};
-const content = (text, image) => !!String(text || '').trim() || !!safeUrl(image);
 export function questionIssues(q) {
   if (!q) return ['не назначен вопрос'];
   const issues = [];
-  if (!content(q.text, q.image)) issues.push('нет текста или картинки вопроса');
-  if (!content(q.answer, q.answerImage)) issues.push('нет текста или картинки ответа');
-  if (q.image && !safeUrl(q.image)) issues.push('некорректный URL картинки вопроса');
-  if (q.answerImage && !safeUrl(q.answerImage)) issues.push('некорректный URL картинки ответа');
-  return issues;
+  for (const answer of [false, true]) {
+    const { url, kind } = questionMedia(q, answer);
+    if (!String((answer ? q.answer : q.text) || '').trim() && !mediaSource(url, kind)) {
+      issues.push(`нет текста, картинки или видео ${answer ? 'ответа' : 'вопроса'}`);
+    }
+  }
+  return issues.concat(mediaIssues(q));
 }
 export function validModifier(m) {
   return !!m && !!m.name?.trim() && Number.isFinite(m.value) &&
@@ -212,7 +212,8 @@ export const STORAGE_KEY = 'rnimu-svoya-igra-v1';
 export function validSavedState(s) {
   const array = Array.isArray;
   const text = x => typeof x === 'string';
-  const question = q => q && ['id','text','image','answer','answerImage'].every(k=>text(q[k]));
+  const question = q => q && ['id','text','image','answer','answerImage'].every(k=>text(q[k])) &&
+    ['video','answerVideo'].every(k=>q[k]===undefined||text(q[k]));
   const g = s?.game, b = s?.bank;
   return s?.version === 1 && b && array(b.themes) && array(b.cats) && array(b.modifiers) &&
     b.themes.every(t=>text(t.id)&&text(t.name)&&array(t.questions)&&t.questions.every(question)) && b.cats.every(question) &&
